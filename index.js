@@ -34,7 +34,7 @@ if (!TOKEN) {
 // ========== CACHES ==========
 let mangaCache = { data: null, timestamp: 0 };
 let titulosCache = { data: [], timestamp: 0 };
-let perfisCache = new Map(); // Cache para perfis
+let perfisCache = new Map();
 const CACHE_DURATION = 300000; // 5 minutos
 const CACHE_TITULOS_DURATION = 60000; // 1 minuto
 
@@ -94,6 +94,38 @@ async function updateDiscordMembersCache() {
     }
 }
 
+// ========== ROTA PARA O SITE CONSULTAR STATUS DO DISCORD ==========
+app.get('/api/stats', async (req, res) => {
+    try {
+        // Forçar atualização se o cache estiver velho
+        const now = Date.now();
+        if (!discordMembersCache.timestamp || (now - discordMembersCache.timestamp) > DISCORD_CACHE_DURATION) {
+            await updateDiscordMembersCache();
+        }
+        
+        // Retornar dados no formato que o site espera
+        return res.json({
+            online: discordMembersCache.online,
+            idle: discordMembersCache.idle,
+            dnd: discordMembersCache.dnd,
+            total: discordMembersCache.total,
+            bots: discordMembersCache.bots,
+            timestamp: discordMembersCache.timestamp
+        });
+        
+    } catch (error) {
+        console.error('Erro na rota /api/stats:', error.message);
+        res.status(500).json({ 
+            error: 'Erro interno',
+            online: 0,
+            idle: 0,
+            dnd: 0,
+            total: 0,
+            bots: 0
+        });
+    }
+});
+
 // ========== FUNÇÕES DE API ==========
 async function fetchFromAPI(baseURL, endpoint, params = '') {
     try {
@@ -130,7 +162,6 @@ async function getUserNames(nome) {
 }
 
 async function getUserProfile(nome) {
-    // Verificar cache (5 minutos)
     const cached = perfisCache.get(nome);
     if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
         return cached.data;
@@ -157,7 +188,7 @@ async function getAllMangas() {
             id: manga.id,
             titulo: manga.titulo || 'Sem título',
             tituloLower: (manga.titulo || '').toLowerCase(),
-            ano: manga.ano || 'N/A',
+            ano: String(manga.ano || 'N/A'), // CORRIGIDO: Converter para string
             tipo: manga.tipo || 'N/A',
             status: manga.status || 'N/A',
             capa: formatCapaUrl(manga.capa),
@@ -182,7 +213,7 @@ async function getMangaByName(nome) {
     return {
         id: data.id,
         titulo: data.titulo || 'Sem título',
-        ano: data.ano || 'N/A',
+        ano: String(data.ano || 'N/A'), // CORRIGIDO: Converter para string
         tipo: data.tipo || 'N/A',
         status: data.status || 'N/A',
         generos: generos,
@@ -283,6 +314,8 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 // ========== EVENTO READY ==========
 client.once('ready', async () => {
     console.log(`✅ Bot ${client.user.tag} online!`);
+    console.log(`📌 Servidor ID: ${GUILD_ID}`);
+    console.log(`📌 API do site: ${API_MANGAS_URL}`);
     
     await updateDiscordMembersCache();
     
@@ -360,13 +393,19 @@ client.on('interactionCreate', async interaction => {
         if (interaction.commandName === 'status') {
             const discordStats = await updateDiscordMembersCache();
             
-            // Buscar stats do site
             let siteOnline = 0, siteTotal = 0;
             try {
-                const response = await fetch(API_SITE_STATS, { timeout: 5000 });
-                const data = await response.json();
-                siteOnline = data.online || 0;
-                siteTotal = data.total || 0;
+                const response = await fetch(API_SITE_STATS, { 
+                    timeout: 5000,
+                    headers: { 'Accept': 'application/json' }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    siteOnline = data.online || 0;
+                    siteTotal = data.total || 0;
+                    console.log('📊 Site stats:', data);
+                }
             } catch (error) {
                 console.error('Erro ao buscar stats do site:', error.message);
             }
@@ -377,12 +416,12 @@ client.on('interactionCreate', async interaction => {
                 .addFields(
                     { 
                         name: '👥 Discord', 
-                        value: `🟢 ${discordStats.online} online\n🌙 ${discordStats.idle} ausente\n⛔ ${discordStats.dnd} ocupado\n⚫ ${discordStats.offline} offline\n🤖 ${discordStats.bots} bots`, 
+                        value: `🟢 **${discordStats.online}** online\n🌙 **${discordStats.idle}** ausente\n⛔ **${discordStats.dnd}** ocupado\n⚫ **${discordStats.offline}** offline\n🤖 **${discordStats.bots}** bots`, 
                         inline: true 
                     },
                     { 
                         name: '🌐 Site', 
-                        value: `🟢 **${siteOnline}** online agora\n📚 **${siteTotal}** usuários totais`, 
+                        value: `🟢 **${siteOnline}** online agora\n📚 **${siteTotal}** usuários totais\n⏱️ Últimos 15 minutos`, 
                         inline: true 
                     }
                 )
@@ -589,14 +628,12 @@ client.on('interactionCreate', async interaction => {
                 return interaction.editReply(`❌ Usuário "${nome}" não encontrado.`);
             }
             
-            // Formatar datas
             const ultimoAcesso = perfil.ultimo_acesso 
                 ? `<t:${Math.floor(new Date(perfil.ultimo_acesso).getTime() / 1000)}:R>`
                 : 'Nunca acessou';
             
             const ultimoManga = perfil.ultimo_manga || 'Nenhum mangá lido ainda';
             
-            // Status VIP
             let vipStatus = '❌ Não VIP';
             if (perfil.vip_status == 1) {
                 vipStatus = '✅ VIP Ativo';
@@ -691,6 +728,8 @@ client.login(TOKEN);
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`📡 API rodando na porta ${PORT}`);
+    console.log(`🌐 Rota /api/stats disponível para o site`);
+    console.log(`🌐 Health check: /health`);
 });
 
 process.on('unhandledRejection', error => {
