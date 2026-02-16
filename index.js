@@ -22,9 +22,13 @@ const TOKEN = process.env.DISCORD_TOKEN || process.env.TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '1472732287752732863';
 const SITE_URL = 'https://portalreading.com';
 const API_MANGAS_URL = `${SITE_URL}/fazer_login/api_mangas.php`;
+const API_ULTIMO_MANGA_URL = `${SITE_URL}/fazer_login/api_ultimo_manga.php`;
 const API_PERFIL_URL = `${SITE_URL}/fazer_login/api_perfil.php`;
 const API_SITE_STATS = `${SITE_URL}/fazer_login/site_stats.php`;
 const BANNER_URL = `${SITE_URL}/bannersdiscord/ipsite.jpg`;
+
+// Canal para anúncios de novos mangás
+const CANAL_NOVOS_MANGAS = '1459649166581174444';
 
 if (!TOKEN) {
     console.error('❌ ERRO: Token não encontrado!');
@@ -37,6 +41,12 @@ let titulosCache = { data: [], timestamp: 0 };
 let perfisCache = new Map();
 const CACHE_DURATION = 300000; // 5 minutos
 const CACHE_TITULOS_DURATION = 60000; // 1 minuto
+
+// Cache para último mangá (para evitar anúncios duplicados)
+let ultimoMangaEnviado = {
+    id: 0,
+    timestamp: 0
+};
 
 // Cache de membros do Discord
 let discordMembersCache = {
@@ -53,6 +63,125 @@ const DISCORD_CACHE_DURATION = 30000; // 30 segundos
 // Cooldowns
 const cooldowns = new Map();
 const MANGAS_COOLDOWN = 300000; // 5 minutos
+
+// ========== FUNÇÃO PARA VERIFICAR NOVOS MANGÁS ==========
+async function verificarNovosMangas() {
+    try {
+        console.log('🔍 Verificando se há novos mangás...');
+        
+        const response = await fetch(API_ULTIMO_MANGA_URL, { 
+            timeout: 5000,
+            headers: { 'Accept': 'application/json' }
+        });
+        
+        if (!response.ok) {
+            console.error('Erro ao buscar último mangá:', response.status);
+            return;
+        }
+        
+        const data = await response.json();
+        
+        if (!data.success || !data.data) {
+            console.log('❌ Nenhum mangá encontrado na API');
+            return;
+        }
+        
+        const novoManga = data.data;
+        
+        // Verificar se é um mangá novo (ID diferente do último enviado)
+        if (novoManga.id > ultimoMangaEnviado.id) {
+            console.log(`🎉 Novo mangá detectado! ID: ${novoManga.id}, Título: ${novoManga.titulo}`);
+            
+            // Enviar anúncio no Discord
+            await anunciarNovoManga(novoManga);
+            
+            // Atualizar cache
+            ultimoMangaEnviado = {
+                id: novoManga.id,
+                timestamp: Date.now()
+            };
+        } else {
+            console.log('✅ Nenhum mangá novo detectado');
+        }
+        
+    } catch (error) {
+        console.error('Erro ao verificar novos mangás:', error.message);
+    }
+}
+
+// ========== FUNÇÃO PARA ANUNCIAR NOVO MANGÁ ==========
+async function anunciarNovoManga(manga) {
+    try {
+        const canal = await client.channels.fetch(CANAL_NOVOS_MANGAS);
+        
+        if (!canal) {
+            console.error('❌ Canal não encontrado!');
+            return;
+        }
+        
+        // Formatar a capa
+        const capaUrl = formatCapaUrl(manga.capa);
+        
+        // Processar gêneros
+        let generos = [];
+        if (manga.subtitulo) {
+            generos = manga.subtitulo.split(',').map(g => g.trim()).filter(g => g);
+        }
+        
+        // Criar embed bem bonito para o novo mangá
+        const embed = new EmbedBuilder()
+            .setColor(0x83d3f3)
+            .setTitle(`🎉 NOVO MANGÁ ADICIONADO! 🎉`)
+            .setDescription(`**${manga.titulo}** acabou de chegar na biblioteca!`)
+            .setThumbnail(capaUrl)
+            .setImage(capaUrl) // A capa maior como imagem principal
+            .addFields(
+                { name: '📖 Título', value: manga.titulo, inline: false },
+                { name: '📅 Ano', value: String(manga.ano || 'N/A'), inline: true },
+                { name: '📖 Tipo', value: manga.tipo || 'N/A', inline: true },
+                { name: '📊 Status', value: manga.status || 'N/A', inline: true },
+                { name: '✍️ Autor', value: manga.autor || 'Não informado', inline: true }
+            )
+            .setFooter({ text: 'Clique no botão abaixo para ler!' })
+            .setTimestamp();
+        
+        // Adicionar sinopse se existir
+        if (manga.sinopse) {
+            let sinopse = manga.sinopse;
+            if (sinopse.length > 500) {
+                sinopse = sinopse.substring(0, 500) + '...';
+            }
+            embed.addFields({ name: '📝 Sinopse', value: sinopse, inline: false });
+        }
+        
+        // Adicionar gêneros se existirem
+        if (generos.length > 0) {
+            embed.addFields({ name: '🏷️ Gêneros', value: generos.join(', '), inline: false });
+        }
+        
+        // Criar botão para ler o mangá
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setLabel('📖 LER AGORA')
+                    .setStyle(ButtonStyle.Link)
+                    .setURL(`${SITE_URL}/fazer_login/detalhes.php?id=${manga.id}`)
+                    .setEmoji('🔥')
+            );
+        
+        // Enviar a mensagem
+        await canal.send({
+            content: '@everyone 📢 **Novo mangá disponível!**',
+            embeds: [embed],
+            components: [row]
+        });
+        
+        console.log(`✅ Anúncio do mangá ${manga.titulo} enviado com sucesso!`);
+        
+    } catch (error) {
+        console.error('Erro ao anunciar novo mangá:', error.message);
+    }
+}
 
 // ========== FUNÇÃO PARA ATUALIZAR CACHE DO DISCORD ==========
 async function updateDiscordMembersCache() {
@@ -97,13 +226,11 @@ async function updateDiscordMembersCache() {
 // ========== ROTA PARA O SITE CONSULTAR STATUS DO DISCORD ==========
 app.get('/api/stats', async (req, res) => {
     try {
-        // Forçar atualização se o cache estiver velho
         const now = Date.now();
         if (!discordMembersCache.timestamp || (now - discordMembersCache.timestamp) > DISCORD_CACHE_DURATION) {
             await updateDiscordMembersCache();
         }
         
-        // Retornar dados no formato que o site espera
         return res.json({
             online: discordMembersCache.online,
             idle: discordMembersCache.idle,
@@ -188,7 +315,7 @@ async function getAllMangas() {
             id: manga.id,
             titulo: manga.titulo || 'Sem título',
             tituloLower: (manga.titulo || '').toLowerCase(),
-            ano: String(manga.ano || 'N/A'), // CORRIGIDO: Converter para string
+            ano: String(manga.ano || 'N/A'),
             tipo: manga.tipo || 'N/A',
             status: manga.status || 'N/A',
             capa: formatCapaUrl(manga.capa),
@@ -213,7 +340,7 @@ async function getMangaByName(nome) {
     return {
         id: data.id,
         titulo: data.titulo || 'Sem título',
-        ano: String(data.ano || 'N/A'), // CORRIGIDO: Converter para string
+        ano: String(data.ano || 'N/A'),
         tipo: data.tipo || 'N/A',
         status: data.status || 'N/A',
         generos: generos,
@@ -315,9 +442,23 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 client.once('ready', async () => {
     console.log(`✅ Bot ${client.user.tag} online!`);
     console.log(`📌 Servidor ID: ${GUILD_ID}`);
+    console.log(`📌 Canal de novos mangás: ${CANAL_NOVOS_MANGAS}`);
     console.log(`📌 API do site: ${API_MANGAS_URL}`);
     
     await updateDiscordMembersCache();
+    
+    // Verificar o último mangá ao iniciar
+    try {
+        const response = await fetch(API_ULTIMO_MANGA_URL, { timeout: 5000 });
+        const data = await response.json();
+        if (data.success && data.data) {
+            ultimoMangaEnviado.id = data.data.id;
+            ultimoMangaEnviado.timestamp = Date.now();
+            console.log(`📚 Último mangá no banco: ID ${ultimoMangaEnviado.id} - ${data.data.titulo}`);
+        }
+    } catch (error) {
+        console.error('Erro ao buscar último mangá na inicialização:', error.message);
+    }
     
     try {
         await rest.put(
@@ -329,7 +470,14 @@ client.once('ready', async () => {
         console.error('❌ Erro registrando comandos:', error);
     }
     
+    // Verificar novos mangás a cada 2 minutos
+    setInterval(verificarNovosMangas, 120000); // 2 minutos
+    
+    // Atualizar cache do Discord a cada 30 segundos
     setInterval(updateDiscordMembersCache, DISCORD_CACHE_DURATION);
+    
+    // Fazer uma verificação inicial após 10 segundos
+    setTimeout(verificarNovosMangas, 10000);
 });
 
 // ========== AUTOCOMPLETE ==========
@@ -389,7 +537,7 @@ client.on('interactionCreate', async interaction => {
     try {
         await interaction.deferReply({ ephemeral: true });
         
-        // ===== /status (CORRIGIDO) =====
+        // ===== /status =====
         if (interaction.commandName === 'status') {
             const discordStats = await updateDiscordMembersCache();
             
@@ -404,7 +552,6 @@ client.on('interactionCreate', async interaction => {
                     const data = await response.json();
                     siteOnline = data.online || 0;
                     siteTotal = data.total || 0;
-                    console.log('📊 Site stats:', data);
                 }
             } catch (error) {
                 console.error('Erro ao buscar stats do site:', error.message);
