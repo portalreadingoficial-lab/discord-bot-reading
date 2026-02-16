@@ -20,8 +20,8 @@ const TOKEN = process.env.TOKEN;
 const CLIENT_ID = '1472732287752732863'; // Pegue no Discord Developer Portal > General Information
 
 // URL do seu site (ajuste conforme necessário)
-const SITE_URL = 'https://seudominio.com'; // Altere para a URL do seu site
-const API_SITE_STATS = `${SITE_URL}/api/site_stats.php`; // Vamos criar este endpoint
+const SITE_URL = 'https://portalreading.com'; // Altere para a URL do seu site
+const API_SITE_STATS = `${SITE_URL}/fazer_login/site_stats.php`; // Vamos criar este endpoint
 
 // ========== REGISTRAR COMANDOS SLASH ==========
 const commands = [
@@ -155,3 +155,4 @@ client.login(TOKEN);
 app.listen(PORT, () => {
     console.log(`📡 API rodando na porta ${PORT}`);
 });
+
