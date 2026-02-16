@@ -21,7 +21,7 @@ const GUILD_ID = process.env.DISCORD_GUILD_ID || '1458602213546135582';
 const TOKEN = process.env.TOKEN || process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '1472732287752732863';
 const SITE_URL = 'https://portalreading.com';
-const API_URL = `${SITE_URL}/api_mangas.php`;
+const API_URL = `${SITE_URL}/fazer_login/api_mangas.php`;
 const API_SITE_STATS = `${SITE_URL}/fazer_login/site_stats.php`;
 const BANNER_URL = `${SITE_URL}/bannersdiscord/ipsite.jpg`;
 
@@ -397,4 +397,5 @@ app.listen(PORT, () => {
 process.on('unhandledRejection', error => {
     console.error('Erro não tratado:', error.message);
 });
+
 
