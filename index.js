@@ -20,7 +20,7 @@ const GUILD_ID = process.env.DISCORD_GUILD_ID;
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const SITE_URL = 'https://portalreading.com';
-const API_URL = `${SITE_URL}/api_mangas.php`; // Arquivo que você criou
+const API_URL = `${SITE_URL}/api_mangas.php`;
 const API_SITE_STATS = `${SITE_URL}/fazer_login/site_stats.php`;
 const BANNER_URL = `${SITE_URL}/bannersdiscord/ipsite.jpg`;
 
@@ -31,9 +31,9 @@ let statsCache = { data: null, timestamp: 0 };
 const CACHE_DURATION = 300000; // 5 minutos
 
 // ========== FUNÇÕES DE API ==========
-async function fetchFromAPI(endpoint) {
+async function fetchFromAPI(endpoint, params = '') {
     try {
-        const response = await fetch(`${API_URL}?acao=${endpoint}`, { timeout: 5000 });
+        const response = await fetch(`${API_URL}?acao=${endpoint}${params}`, { timeout: 5000 });
         const data = await response.json();
         return data.success ? data.data : null;
     } catch (error) {
@@ -51,7 +51,6 @@ async function getAllMangas() {
     
     const data = await fetchFromAPI('lista');
     if (data) {
-        // Processar dados
         const mangas = data.map(manga => ({
             id: manga.id,
             titulo: manga.titulo,
@@ -95,7 +94,6 @@ async function getMangaByName(nome) {
         
         const manga = result.data;
         
-        // Processar gêneros
         let generos = [];
         if (manga.subtitulo) {
             generos = manga.subtitulo.split(',').map(g => g.trim()).filter(g => g);
@@ -162,6 +160,7 @@ async function updateMemberCache() {
         };
         
         lastUpdate = now;
+        console.log(`✅ Membros atualizados: ${online} online`);
     } catch (error) {
         console.error('Erro update members:', error.message);
     }
@@ -175,7 +174,7 @@ const commands = [
     
     new SlashCommandBuilder()
         .setName('mangas')
-        .setDescription('Mostra lista completa de mangás disponíveis'),
+        .setDescription('Mostra lista completa de mangás disponíveis (Cooldown: 5min)'),
     
     new SlashCommandBuilder()
         .setName('manga')
@@ -261,7 +260,6 @@ client.on('interactionCreate', async interaction => {
     
     // /mangas
     if (interaction.commandName === 'mangas') {
-        // Cooldown
         if (!interaction.member.permissions.has('Administrator')) {
             const cooldown = cooldowns.get(interaction.user.id);
             if (cooldown && Date.now() - cooldown < MANGAS_COOLDOWN) {
@@ -355,7 +353,6 @@ client.on('interactionCreate', async interaction => {
             
             await interaction.editReply({ embeds: [embed], components: [row] });
         } catch {
-            // Fallback
             const embed = new EmbedBuilder()
                 .setColor(0x83d3f3)
                 .setTitle('🌐 Reading')
@@ -374,9 +371,18 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
+// ========== ROTA DE SAÚDE ==========
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime() });
+});
+
 // ========== INICIAR ==========
 client.login(TOKEN);
 
 app.listen(PORT, () => {
     console.log(`📡 API rodando na porta ${PORT}`);
+});
+
+process.on('unhandledRejection', error => {
+    console.error('Erro não tratado:', error.message);
 });
