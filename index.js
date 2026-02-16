@@ -115,7 +115,7 @@ async function anunciarNovoManga(manga) {
         const canal = await client.channels.fetch(CANAL_NOVOS_MANGAS);
         
         // COLOQUE AQUI O ID DO SEU CARGO
-        const CARGO_ID = 'SEU_ID_DO_CARGO_AQUI'; // 👈 Substitua pelo ID do seu cargo!
+        const CARGO_ID = '1462670226612031550'; // 👈 Substitua pelo ID do seu cargo!
         
         // Formatar a capa
         const capaUrl = formatCapaUrl(manga.capa);
@@ -895,4 +895,5 @@ app.listen(PORT, '0.0.0.0', () => {
 process.on('unhandledRejection', error => {
     console.error('❌ Erro não tratado:', error.message);
 });
+
 
