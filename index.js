@@ -53,8 +53,9 @@ app.get('/api/stats', async (req, res) => {
 });
 
 // Token direto (por enquanto, para facilitar)
-client.login('MTQ3MjczMjI4Nzc1MjczMjg2Mw.Gvatpp.KBadejB2JGCFg_4zZEp8uj8XJgzxNLVSC47I7o');
+client.login('MTQ3MjczMjI4Nzc1MjczMjg2Mw.G9jY4o.mPsq38q6L46e4RuvkBrW22KKZQFD-Lpj0eghf0');
 
 app.listen(PORT, () => {
     console.log(`✅ Bot online na porta ${PORT}`);
+
 });
