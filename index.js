@@ -21,7 +21,8 @@ const GUILD_ID = process.env.DISCORD_GUILD_ID || '1458602213546135582';
 const TOKEN = process.env.DISCORD_TOKEN || process.env.TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '1472732287752732863';
 const SITE_URL = 'https://portalreading.com';
-const API_URL = `${SITE_URL}/fazer_login/api_mangas.php`;
+const API_MANGAS_URL = `${SITE_URL}/fazer_login/api_mangas.php`;
+const API_PERFIL_URL = `${SITE_URL}/fazer_login/api_perfil.php`;
 const API_SITE_STATS = `${SITE_URL}/fazer_login/site_stats.php`;
 const BANNER_URL = `${SITE_URL}/bannersdiscord/ipsite.jpg`;
 
@@ -33,23 +34,70 @@ if (!TOKEN) {
 // ========== CACHES ==========
 let mangaCache = { data: null, timestamp: 0 };
 let titulosCache = { data: [], timestamp: 0 };
-let statsCache = { data: null, timestamp: 0 };
+let perfisCache = new Map(); // Cache para perfis
 const CACHE_DURATION = 300000; // 5 minutos
 const CACHE_TITULOS_DURATION = 60000; // 1 minuto
 
-// Cache de membros
-let cachedStats = null;
-let lastUpdate = 0;
-const MEMBER_CACHE_DURATION = 60000;
+// Cache de membros do Discord
+let discordMembersCache = {
+    total: 0,
+    online: 0,
+    idle: 0,
+    dnd: 0,
+    offline: 0,
+    bots: 0,
+    timestamp: 0
+};
+const DISCORD_CACHE_DURATION = 30000; // 30 segundos
 
 // Cooldowns
 const cooldowns = new Map();
 const MANGAS_COOLDOWN = 300000; // 5 minutos
 
-// ========== FUNÇÕES DE API ==========
-async function fetchFromAPI(endpoint, params = '') {
+// ========== FUNÇÃO PARA ATUALIZAR CACHE DO DISCORD ==========
+async function updateDiscordMembersCache() {
+    const now = Date.now();
+    if (discordMembersCache.timestamp && (now - discordMembersCache.timestamp) < DISCORD_CACHE_DURATION) {
+        return discordMembersCache;
+    }
+    
     try {
-        const response = await fetch(`${API_URL}?acao=${endpoint}${params}`, { 
+        const guild = await client.guilds.fetch(GUILD_ID);
+        await guild.members.fetch({ withPresences: true });
+        
+        const members = guild.members.cache;
+        const humanos = members.filter(m => !m.user.bot);
+        
+        let online = 0, idle = 0, dnd = 0;
+        humanos.forEach(m => {
+            const status = m.presence?.status;
+            if (status === 'online') online++;
+            else if (status === 'idle') idle++;
+            else if (status === 'dnd') dnd++;
+        });
+        
+        discordMembersCache = {
+            total: humanos.size,
+            online: online,
+            idle: idle,
+            dnd: dnd,
+            offline: humanos.size - online - idle - dnd,
+            bots: members.filter(m => m.user.bot).size,
+            timestamp: now
+        };
+        
+        console.log(`✅ Membros Discord: ${online} online, ${humanos.size} totais`);
+        return discordMembersCache;
+    } catch (error) {
+        console.error('Erro ao atualizar cache do Discord:', error.message);
+        return discordMembersCache;
+    }
+}
+
+// ========== FUNÇÕES DE API ==========
+async function fetchFromAPI(baseURL, endpoint, params = '') {
+    try {
+        const response = await fetch(`${baseURL}?acao=${endpoint}${params}`, { 
             timeout: 5000 
         });
         const data = await response.json();
@@ -68,17 +116,32 @@ async function getMangaTitles() {
         return titulosCache.data;
     }
     
-    try {
-        const data = await fetchFromAPI('titulos');
-        if (data && Array.isArray(data)) {
-            titulosCache = { data, timestamp: agora };
-            return data;
-        }
-        return titulosCache.data || [];
-    } catch (error) {
-        console.error('Erro ao buscar títulos:', error.message);
-        return titulosCache.data || [];
+    const data = await fetchFromAPI(API_MANGAS_URL, 'titulos');
+    if (data && Array.isArray(data)) {
+        titulosCache = { data, timestamp: agora };
+        return data;
     }
+    return titulosCache.data || [];
+}
+
+async function getUserNames(nome) {
+    const data = await fetchFromAPI(API_PERFIL_URL, 'buscar', `&nome=${encodeURIComponent(nome)}`);
+    return data || [];
+}
+
+async function getUserProfile(nome) {
+    // Verificar cache (5 minutos)
+    const cached = perfisCache.get(nome);
+    if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
+        return cached.data;
+    }
+    
+    const data = await fetchFromAPI(API_PERFIL_URL, 'perfil', `&nome=${encodeURIComponent(nome)}`);
+    if (data) {
+        perfisCache.set(nome, { data, timestamp: Date.now() });
+        return data;
+    }
+    return null;
 }
 
 async function getAllMangas() {
@@ -88,56 +151,44 @@ async function getAllMangas() {
         return mangaCache.data;
     }
     
-    try {
-        const data = await fetchFromAPI('lista');
-        if (data && Array.isArray(data)) {
-            const mangas = data.map(manga => ({
-                id: manga.id,
-                titulo: manga.titulo || 'Sem título',
-                tituloLower: (manga.titulo || '').toLowerCase(),
-                ano: manga.ano || 'N/A',
-                tipo: manga.tipo || 'N/A',
-                status: manga.status || 'N/A',
-                capa: formatCapaUrl(manga.capa),
-                link: `${SITE_URL}/fazer_login/detalhes.php?id=${manga.id}`
-            }));
-            
-            mangaCache = { data: mangas, timestamp: now };
-            return mangas;
-        }
-        return mangaCache.data || [];
-    } catch (error) {
-        console.error('Erro ao buscar mangás:', error.message);
-        return mangaCache.data || [];
-    }
-}
-
-async function getMangaByName(nome) {
-    try {
-        const data = await fetchFromAPI('busca', `&nome=${encodeURIComponent(nome)}`);
-        
-        if (!data) return null;
-        
-        const manga = data;
-        let generos = [];
-        if (manga.subtitulo) {
-            generos = manga.subtitulo.split(',').map(g => g.trim()).filter(g => g);
-        }
-        
-        return {
+    const data = await fetchFromAPI(API_MANGAS_URL, 'lista');
+    if (data && Array.isArray(data)) {
+        const mangas = data.map(manga => ({
             id: manga.id,
             titulo: manga.titulo || 'Sem título',
+            tituloLower: (manga.titulo || '').toLowerCase(),
             ano: manga.ano || 'N/A',
             tipo: manga.tipo || 'N/A',
             status: manga.status || 'N/A',
-            generos: generos,
             capa: formatCapaUrl(manga.capa),
             link: `${SITE_URL}/fazer_login/detalhes.php?id=${manga.id}`
-        };
-    } catch (error) {
-        console.error('Erro na busca:', error.message);
-        return null;
+        }));
+        
+        mangaCache = { data: mangas, timestamp: now };
+        return mangas;
     }
+    return mangaCache.data || [];
+}
+
+async function getMangaByName(nome) {
+    const data = await fetchFromAPI(API_MANGAS_URL, 'busca', `&nome=${encodeURIComponent(nome)}`);
+    if (!data) return null;
+    
+    let generos = [];
+    if (data.subtitulo) {
+        generos = data.subtitulo.split(',').map(g => g.trim()).filter(g => g);
+    }
+    
+    return {
+        id: data.id,
+        titulo: data.titulo || 'Sem título',
+        ano: data.ano || 'N/A',
+        tipo: data.tipo || 'N/A',
+        status: data.status || 'N/A',
+        generos: generos,
+        capa: formatCapaUrl(data.capa),
+        link: `${SITE_URL}/fazer_login/detalhes.php?id=${data.id}`
+    };
 }
 
 function formatCapaUrl(capaPath) {
@@ -150,41 +201,6 @@ function formatCapaUrl(capaPath) {
         return `${SITE_URL}/capas/${capaPath}`;
     }
     return `${SITE_URL}${capaPath}`;
-}
-
-// ========== FUNÇÕES DE MEMBROS ==========
-async function updateMemberCache() {
-    const now = Date.now();
-    if (cachedStats && (now - lastUpdate) < MEMBER_CACHE_DURATION) return;
-    
-    try {
-        const guild = await client.guilds.fetch(GUILD_ID);
-        await guild.members.fetch({ withPresences: true });
-        
-        const members = guild.members.cache;
-        const humanos = members.filter(m => !m.user.bot);
-        
-        let online = 0, idle = 0, dnd = 0;
-        humanos.forEach(m => {
-            const status = m.presence?.status;
-            if (status === 'online') online++;
-            else if (status === 'idle') idle++;
-            else if (status === 'dnd') dnd++;
-        });
-        
-        cachedStats = {
-            total: humanos.size,
-            online,
-            idle,
-            dnd,
-            offline: humanos.size - online - idle - dnd
-        };
-        
-        lastUpdate = now;
-        console.log(`✅ Membros atualizados: ${online} online`);
-    } catch (error) {
-        console.error('Erro update members:', error.message);
-    }
 }
 
 // ========== FUNÇÃO PARA CRIAR GRID DE MANGÁS ==========
@@ -205,14 +221,12 @@ function criarGridMangas(mangas, pagina = 0, itensPorPagina = 10) {
     const paginaMangas = mangas.slice(start, end);
     const totalPaginas = Math.ceil(mangas.length / itensPorPagina);
     
-    // Criar descrição com os mangás em formato de grid
     let descricao = '';
     paginaMangas.forEach((manga, index) => {
         const numero = start + index + 1;
         descricao += `**${numero}.** [${manga.titulo}](${manga.link}) ─ ${manga.ano} • ${manga.tipo}\n`;
     });
     
-    // Criar embed
     const embed = new EmbedBuilder()
         .setColor(0x83d3f3)
         .setTitle('📚 Biblioteca Reading')
@@ -224,7 +238,6 @@ function criarGridMangas(mangas, pagina = 0, itensPorPagina = 10) {
         .setFooter({ text: 'Use os botões para navegar' })
         .setTimestamp();
     
-    // Adicionar thumbnail da primeira capa (se existir)
     if (paginaMangas.length > 0 && paginaMangas[0].capa) {
         embed.setThumbnail(paginaMangas[0].capa);
     }
@@ -236,7 +249,7 @@ function criarGridMangas(mangas, pagina = 0, itensPorPagina = 10) {
 const commands = [
     new SlashCommandBuilder()
         .setName('status')
-        .setDescription('Mostra quantos usuários estão online no site Reading'),
+        .setDescription('Mostra quantos usuários estão online no Discord e no site'),
     
     new SlashCommandBuilder()
         .setName('mangas')
@@ -252,6 +265,15 @@ const commands = [
                 .setAutocomplete(true)),
     
     new SlashCommandBuilder()
+        .setName('perfil')
+        .setDescription('Mostra perfil de um usuário do site')
+        .addStringOption(option =>
+            option.setName('nome')
+                .setDescription('Nome do usuário no site')
+                .setRequired(true)
+                .setAutocomplete(true)),
+    
+    new SlashCommandBuilder()
         .setName('site')
         .setDescription('Informações sobre o site Reading')
 ];
@@ -261,10 +283,8 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 // ========== EVENTO READY ==========
 client.once('ready', async () => {
     console.log(`✅ Bot ${client.user.tag} online!`);
-    console.log(`📌 Servidor ID: ${GUILD_ID}`);
-    console.log(`📌 API URL: ${API_URL}`);
     
-    await updateMemberCache();
+    await updateDiscordMembersCache();
     
     try {
         await rest.put(
@@ -276,45 +296,56 @@ client.once('ready', async () => {
         console.error('❌ Erro registrando comandos:', error);
     }
     
-    setInterval(updateMemberCache, MEMBER_CACHE_DURATION);
+    setInterval(updateDiscordMembersCache, DISCORD_CACHE_DURATION);
 });
 
 // ========== AUTOCOMPLETE ==========
 client.on('interactionCreate', async interaction => {
     if (!interaction.isAutocomplete()) return;
     
-    if (interaction.commandName === 'manga') {
-        try {
-            const focused = interaction.options.getFocused().toLowerCase();
-            
+    try {
+        const focused = interaction.options.getFocused().toLowerCase();
+        
+        if (interaction.commandName === 'manga') {
             const titles = await Promise.race([
                 getMangaTitles(),
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Timeout')), 2000)
-                )
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
             ]);
             
-            if (!titles || !Array.isArray(titles) || titles.length === 0) {
+            if (!titles || !Array.isArray(titles)) {
                 return await interaction.respond([]).catch(() => {});
             }
             
             const filtered = titles
-                .filter(t => t && typeof t === 'string' && t.toLowerCase().includes(focused))
+                .filter(t => t && t.toLowerCase().includes(focused))
                 .slice(0, 25);
             
             await interaction.respond(
-                filtered.map(t => ({ 
-                    name: t.substring(0, 100), 
-                    value: t.substring(0, 100) 
-                }))
+                filtered.map(t => ({ name: t.substring(0, 100), value: t.substring(0, 100) }))
             ).catch(() => {});
-            
-        } catch (error) {
-            console.error('Erro no autocomplete:', error.message);
-            try { 
-                await interaction.respond([]); 
-            } catch (e) {}
         }
+        
+        if (interaction.commandName === 'perfil') {
+            const users = await Promise.race([
+                getUserNames(focused),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+            ]);
+            
+            if (!users || !Array.isArray(users)) {
+                return await interaction.respond([]).catch(() => {});
+            }
+            
+            const filtered = users
+                .filter(u => u && u.toLowerCase().includes(focused))
+                .slice(0, 25);
+            
+            await interaction.respond(
+                filtered.map(u => ({ name: u.substring(0, 100), value: u.substring(0, 100) }))
+            ).catch(() => {});
+        }
+    } catch (error) {
+        console.error('Erro no autocomplete:', error.message);
+        try { await interaction.respond([]); } catch (e) {}
     }
 });
 
@@ -325,30 +356,44 @@ client.on('interactionCreate', async interaction => {
     try {
         await interaction.deferReply({ ephemeral: true });
         
-        // ===== /status =====
+        // ===== /status (CORRIGIDO) =====
         if (interaction.commandName === 'status') {
+            const discordStats = await updateDiscordMembersCache();
+            
+            // Buscar stats do site
+            let siteOnline = 0, siteTotal = 0;
             try {
                 const response = await fetch(API_SITE_STATS, { timeout: 5000 });
                 const data = await response.json();
-                
-                const embed = new EmbedBuilder()
-                    .setColor(0x83d3f3)
-                    .setTitle('📊 Reading Status')
-                    .addFields(
-                        { name: '👥 Online', value: `**${data.online || 0}**`, inline: true },
-                        { name: '📈 Total', value: `**${data.total || 0}**`, inline: true }
-                    )
-                    .setTimestamp();
-                
-                await interaction.editReply({ embeds: [embed] });
-            } catch {
-                await interaction.editReply('❌ Erro ao buscar status do site');
+                siteOnline = data.online || 0;
+                siteTotal = data.total || 0;
+            } catch (error) {
+                console.error('Erro ao buscar stats do site:', error.message);
             }
+            
+            const embed = new EmbedBuilder()
+                .setColor(0x83d3f3)
+                .setTitle('📊 Status Reading')
+                .addFields(
+                    { 
+                        name: '👥 Discord', 
+                        value: `🟢 ${discordStats.online} online\n🌙 ${discordStats.idle} ausente\n⛔ ${discordStats.dnd} ocupado\n⚫ ${discordStats.offline} offline\n🤖 ${discordStats.bots} bots`, 
+                        inline: true 
+                    },
+                    { 
+                        name: '🌐 Site', 
+                        value: `🟢 **${siteOnline}** online agora\n📚 **${siteTotal}** usuários totais`, 
+                        inline: true 
+                    }
+                )
+                .setFooter({ text: 'Atualizado a cada 30s' })
+                .setTimestamp();
+            
+            await interaction.editReply({ embeds: [embed] });
         }
         
         // ===== /mangas =====
         if (interaction.commandName === 'mangas') {
-            // Cooldown
             if (!interaction.member.permissions.has('Administrator')) {
                 const cooldown = cooldowns.get(interaction.user.id);
                 if (cooldown && Date.now() - cooldown < MANGAS_COOLDOWN) {
@@ -366,10 +411,8 @@ client.on('interactionCreate', async interaction => {
             let paginaAtual = 0;
             const { embed, totalPaginas } = criarGridMangas(mangas, paginaAtual);
             
-            // Criar botões de navegação
             const row = new ActionRowBuilder();
             
-            // Adicionar botões apenas se houver mais de uma página
             if (totalPaginas > 1) {
                 row.addComponents(
                     new ButtonBuilder()
@@ -395,7 +438,6 @@ client.on('interactionCreate', async interaction => {
                 );
             }
             
-            // Botão para ver no site (sempre presente)
             row.addComponents(
                 new ButtonBuilder()
                     .setLabel('🔍 Ver no Site')
@@ -408,7 +450,6 @@ client.on('interactionCreate', async interaction => {
                 components: row.components.length > 0 ? [row] : []
             });
             
-            // Se tiver apenas uma página, não precisa de coletor
             if (totalPaginas <= 1) {
                 if (!interaction.member.permissions.has('Administrator')) {
                     cooldowns.set(interaction.user.id, Date.now());
@@ -416,10 +457,9 @@ client.on('interactionCreate', async interaction => {
                 return;
             }
             
-            // Criar coletor para os botões
             const collector = response.createMessageComponentCollector({
                 componentType: ComponentType.Button,
-                time: 300000 // 5 minutos
+                time: 300000
             });
             
             collector.on('collect', async (i) => {
@@ -430,27 +470,16 @@ client.on('interactionCreate', async interaction => {
                     });
                 }
                 
-                // Atualizar página baseado no botão
                 switch (i.customId) {
-                    case 'primeira':
-                        paginaAtual = 0;
-                        break;
-                    case 'anterior':
-                        paginaAtual = Math.max(0, paginaAtual - 1);
-                        break;
-                    case 'proxima':
-                        paginaAtual = Math.min(totalPaginas - 1, paginaAtual + 1);
-                        break;
-                    case 'ultima':
-                        paginaAtual = totalPaginas - 1;
-                        break;
-                    default:
-                        return;
+                    case 'primeira': paginaAtual = 0; break;
+                    case 'anterior': paginaAtual = Math.max(0, paginaAtual - 1); break;
+                    case 'proxima': paginaAtual = Math.min(totalPaginas - 1, paginaAtual + 1); break;
+                    case 'ultima': paginaAtual = totalPaginas - 1; break;
+                    default: return;
                 }
                 
                 const { embed: novoEmbed } = criarGridMangas(mangas, paginaAtual);
                 
-                // Atualizar botões
                 const novaRow = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
@@ -483,7 +512,6 @@ client.on('interactionCreate', async interaction => {
             });
             
             collector.on('end', async () => {
-                // Desabilitar botões quando o tempo acabar
                 const disabledRow = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
@@ -547,6 +575,52 @@ client.on('interactionCreate', async interaction => {
                         .setLabel('📖 Ler Mangá')
                         .setStyle(ButtonStyle.Link)
                         .setURL(manga.link)
+                );
+            
+            await interaction.editReply({ embeds: [embed], components: [row] });
+        }
+        
+        // ===== /perfil =====
+        if (interaction.commandName === 'perfil') {
+            const nome = interaction.options.getString('nome');
+            const perfil = await getUserProfile(nome);
+            
+            if (!perfil) {
+                return interaction.editReply(`❌ Usuário "${nome}" não encontrado.`);
+            }
+            
+            // Formatar datas
+            const ultimoAcesso = perfil.ultimo_acesso 
+                ? `<t:${Math.floor(new Date(perfil.ultimo_acesso).getTime() / 1000)}:R>`
+                : 'Nunca acessou';
+            
+            const ultimoManga = perfil.ultimo_manga || 'Nenhum mangá lido ainda';
+            
+            // Status VIP
+            let vipStatus = '❌ Não VIP';
+            if (perfil.vip_status == 1) {
+                vipStatus = '✅ VIP Ativo';
+            }
+            
+            const embed = new EmbedBuilder()
+                .setColor(0x83d3f3)
+                .setTitle(`👤 Perfil de ${perfil.usuario}`)
+                .setDescription(`📊 **Nível:** ${perfil.nivel || 1}`)
+                .addFields(
+                    { name: '💎 VIP', value: vipStatus, inline: true },
+                    { name: '📚 Mangás Lidos', value: `**${perfil.mangas_lidos || 0}**`, inline: true },
+                    { name: '🕒 Último Acesso', value: ultimoAcesso, inline: false },
+                    { name: '📖 Último Mangá', value: ultimoManga, inline: false }
+                )
+                .setFooter({ text: 'Clique no botão para ver no site' })
+                .setTimestamp();
+            
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setLabel('👤 Ver Perfil no Site')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(`${SITE_URL}/fazer_login/perfil.php?user=${encodeURIComponent(perfil.usuario)}`)
                 );
             
             await interaction.editReply({ embeds: [embed], components: [row] });
@@ -617,10 +691,8 @@ client.login(TOKEN);
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`📡 API rodando na porta ${PORT}`);
-    console.log(`🌐 Health check: /health`);
 });
 
-// Tratamento global de erros
 process.on('unhandledRejection', error => {
     console.error('❌ Erro não tratado:', error.message);
 });
