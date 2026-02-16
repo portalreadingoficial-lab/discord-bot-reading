@@ -115,11 +115,12 @@ async function anunciarNovoManga(manga) {
         const canal = await client.channels.fetch(CANAL_NOVOS_MANGAS);
         const CARGO_ID = '1462670226612031550';
         
-        console.log('📦 Dados recebidos:', manga);
+        console.log('📦 Dados recebidos da API:', manga);
         
-        // CORREÇÃO: Usar os nomes corretos dos campos
-        const titulo = manga.título || manga.titulo || 'Sem título';
-        const subtitulo = manga.subtítulo || manga.subtitulo || '';
+        // IMPORTANTE: Pegar os dados do jeito que vieram da API
+        // A API pode mandar com acentos ou sem, então fazemos fallback
+        const titulo = manga.titulo || manga.título || 'Sem título';
+        const subtitulo = manga.subtitulo || manga.subtítulo || '';
         const capaUrl = formatCapaUrl(manga.capa);
         const autor = manga.autor || 'Não informado';
         const ano = String(manga.ano || 'N/A');
@@ -127,7 +128,7 @@ async function anunciarNovoManga(manga) {
         const tipo = manga.tipo || 'N/A';
         const sinopse = manga.sinopse || 'Sinopse não disponível';
         
-        // Processar gêneros (do campo subtítulo)
+        // Processar gêneros
         let generos = [];
         if (subtitulo) {
             generos = subtitulo.split(',').map(g => g.trim()).filter(g => g);
@@ -155,7 +156,7 @@ async function anunciarNovoManga(manga) {
             .setFooter({ text: 'Clique no botão abaixo para começar a ler!' })
             .setTimestamp();
         
-        // Adicionar gêneros se houver
+        // Adicionar gêneros
         if (generos.length > 0) {
             embed.addFields({ 
                 name: '🏷️ Gêneros', 
@@ -171,7 +172,7 @@ async function anunciarNovoManga(manga) {
             inline: false 
         });
         
-        // Botão para ler
+        // Botão
         const row = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
@@ -188,15 +189,16 @@ async function anunciarNovoManga(manga) {
             components: [row]
         });
         
-        console.log(`✅ Anúncio do mangá ${titulo} enviado com sucesso!`);
+        console.log(`✅ Anúncio enviado: ${titulo}`);
         
     } catch (error) {
-        console.error('Erro ao anunciar:', error);
+        console.error('Erro no anúncio:', error);
         
         // Fallback
         try {
             const canal = await client.channels.fetch(CANAL_NOVOS_MANGAS);
-            await canal.send(`📚 **NOVO MANGÁ:** ${manga.título || manga.titulo}\n${SITE_URL}/fazer_login/detalhes.php?id=${manga.id}`);
+            const titulo = manga.titulo || manga.título || 'Mangá';
+            await canal.send(`📚 **NOVO MANGÁ:** ${titulo}\n${SITE_URL}/fazer_login/detalhes.php?id=${manga.id}`);
         } catch (e) {
             console.error('Erro total:', e);
         }
@@ -902,6 +904,7 @@ app.listen(PORT, '0.0.0.0', () => {
 process.on('unhandledRejection', error => {
     console.error('❌ Erro não tratado:', error.message);
 });
+
 
 
 
