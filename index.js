@@ -53,9 +53,10 @@ app.get('/api/stats', async (req, res) => {
 });
 
 // Token direto (por enquanto, para facilitar)
-client.login('MTQ3MjczMjI4Nzc1MjczMjg2Mw.G9jY4o.mPsq38q6L46e4RuvkBrW22KKZQFD-Lpj0eghf0');
+client.login(process.env.TOKEN);
 
 app.listen(PORT, () => {
     console.log(`✅ Bot online na porta ${PORT}`);
 
 });
+
