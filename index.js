@@ -2,7 +2,6 @@ const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, ActionRowB
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
-require('dotenv').config();
 
 const client = new Client({
     intents: [
@@ -16,13 +15,25 @@ const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
-const GUILD_ID = process.env.DISCORD_GUILD_ID;
-const TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
+
+// ========== CONFIGURAÇÕES (via variáveis de ambiente do host) ==========
+const GUILD_ID = process.env.DISCORD_GUILD_ID || '1458602213546135582';
+const TOKEN = process.env.DISCORD_TOKEN; // JÁ ESTÁ NO HOST
+const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '1472732287752732863';
 const SITE_URL = 'https://portalreading.com';
 const API_URL = `${SITE_URL}/api_mangas.php`;
 const API_SITE_STATS = `${SITE_URL}/fazer_login/site_stats.php`;
 const BANNER_URL = `${SITE_URL}/bannersdiscord/ipsite.jpg`;
+
+// Verificação
+if (!TOKEN) {
+    console.error('❌ ERRO: Token não encontrado nas variáveis de ambiente!');
+    process.exit(1);
+}
+
+console.log('✅ Bot iniciando...');
+console.log(`📌 Servidor ID: ${GUILD_ID}`);
+console.log(`📌 Client ID: ${CLIENT_ID}`);
 
 // Cache
 let mangaCache = { data: null, timestamp: 0 };
